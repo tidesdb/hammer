@@ -62,8 +62,6 @@ usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 
-HammerDB TPC-C / TPC-H benchmark: TidesDB vs RocksDB vs PostgreSQL
-
 Options:
   -e, --engine       STR   Engine: tidesdb|rocksdb|innodb|postgres|both|all
                            (default: $ENGINE_SELECT)
