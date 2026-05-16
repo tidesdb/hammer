@@ -45,7 +45,7 @@ mariadb_engines_runner.sh \
 
 OR
 
-./run_mariadb_engines.sh \
+./mariadb_engines_runner.sh \
   --user hammerdb \
   --pass hammerdb123 \
   --socket /tmp/mariadb.sock \
