@@ -139,6 +139,17 @@ if [[ "$RANDOMIZE_ORDER" -eq 1 ]]; then
     done
 fi
 
+# Resolve relative paths to absolute *before* any per-iter subshell `cd` so
+# `--harness ./hammerdb_runner.sh` still resolves once we cd into iterN/.
+# Same for HAMMERDB_DIR for the same reason.  If the path doesn't exist yet
+# we leave the value as-is so pre-flight can surface a clear error.
+if [[ -e "$HARNESS" ]]; then
+    HARNESS="$(cd "$(dirname "$HARNESS")" && pwd)/$(basename "$HARNESS")"
+fi
+if [[ -d "$HAMMERDB_DIR" ]]; then
+    HAMMERDB_DIR="$(cd "$HAMMERDB_DIR" && pwd)"
+fi
+
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 if [[ -n "$RESUME_DIR" ]]; then
     if [[ ! -d "$RESUME_DIR" ]]; then
@@ -151,6 +162,9 @@ else
     RESULTS_DIR="results_${TIMESTAMP}"
     mkdir -p "$RESULTS_DIR/final/merged"
 fi
+# Anchor RESULTS_DIR to an absolute path so it survives any future cd in
+# subshells (currently only the per-iter cd does so, but harden anyway).
+RESULTS_DIR="$(cd "$RESULTS_DIR" && pwd)"
 
 JOURNAL="$RESULTS_DIR/journal.txt"
 MASTER_LOG="$RESULTS_DIR/master.log"
