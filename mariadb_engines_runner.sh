@@ -33,6 +33,11 @@ MYSQL_USER="${MYSQL_USER:-root}"
 MYSQL_PASS="${MYSQL_PASS:-}"
 MYSQL_SOCKET="${MYSQL_SOCKET:-/tmp/mariadb.sock}"
 MARIADB_SERVICE="${MARIADB_SERVICE:-mariadb}"
+# Explicit override path for the mariadb/mysql client.  When unset, the
+# script searches $PATH and then a handful of common install locations.
+# Use this on hosts where root has a stripped PATH and the client lives
+# in /data/mariadb/bin, /usr/local/mariadb/bin, etc.
+MARIADB_BIN="${MARIADB_BIN:-}"
 # MARIADB_DATA_DIR is auto-detected from `SELECT @@datadir` during pre-flight
 # when not explicitly set, so the disk-space check reports the right volume.
 MARIADB_DATA_DIR="${MARIADB_DATA_DIR:-}"
@@ -73,6 +78,8 @@ Usage: mariadb_engines_runner.sh [options]
   --socket PATH            MariaDB socket
   --user NAME              MariaDB user
   --pass PASS              MariaDB password (or set MYSQL_PASS env)
+  --mariadb-bin PATH       Full path to mariadb/mysql client binary
+                            (override when not on PATH; or set MARIADB_BIN env)
   --no-perf                Skip perf record
   --no-restart             Don't restart mariadbd between iterations
                             (faster, but cache-warm bias)
@@ -106,6 +113,7 @@ while [[ $# -gt 0 ]]; do
         --socket)       MYSQL_SOCKET="$2"; shift 2;;
         --user)         MYSQL_USER="$2"; shift 2;;
         --pass)         MYSQL_PASS="$2"; shift 2;;
+        --mariadb-bin)  MARIADB_BIN="$2"; shift 2;;
         --no-perf)      PERF=0; shift;;
         --no-restart)   RESTART_MARIADB=0; shift;;
         --no-drop-cache) DROP_OS_CACHE=0; shift;;
@@ -176,16 +184,41 @@ journal_add() {
     echo "$marker" >> "$JOURNAL"
 }
 
-# Detect which client binary is on PATH.  Modern MariaDB-only installs ship
-# only `mariadb`; older / mixed installs still have `mysql`.  Prefer whichever
-# is available so the script works on either.
+# Pick the MariaDB/MySQL client binary in this order:
+#   1. Explicit --mariadb-bin / MARIADB_BIN override.
+#   2. `mariadb` then `mysql` on $PATH (modern installs ship only `mariadb`).
+#   3. A handful of common install locations -- root on minimal images often
+#      has a stripped PATH that misses /usr/local/.../bin or /data/mariadb/bin.
 MYSQL_CLI=""
-for _cli in mariadb mysql; do
-    if command -v "$_cli" >/dev/null 2>&1; then
-        MYSQL_CLI="$_cli"
-        break
+if [[ -n "$MARIADB_BIN" ]]; then
+    if [[ -x "$MARIADB_BIN" ]]; then
+        MYSQL_CLI="$MARIADB_BIN"
+    else
+        echo "WARN: MARIADB_BIN='$MARIADB_BIN' is not executable -- falling back to PATH search" >&2
     fi
-done
+fi
+if [[ -z "$MYSQL_CLI" ]]; then
+    for _cli in mariadb mysql; do
+        if command -v "$_cli" >/dev/null 2>&1; then
+            MYSQL_CLI="$_cli"
+            break
+        fi
+    done
+fi
+if [[ -z "$MYSQL_CLI" ]]; then
+    for _cand in /data/mariadb/bin/mariadb \
+                 /usr/local/mariadb/bin/mariadb \
+                 /opt/mariadb/bin/mariadb \
+                 /usr/bin/mariadb /usr/local/bin/mariadb \
+                 /data/mariadb/bin/mysql \
+                 /usr/local/mariadb/bin/mysql \
+                 /usr/bin/mysql /usr/local/bin/mysql; do
+        if [[ -x "$_cand" ]]; then
+            MYSQL_CLI="$_cand"
+            break
+        fi
+    done
+fi
 
 mysql_query() {
     [[ -z "$MYSQL_CLI" ]] && return 1
