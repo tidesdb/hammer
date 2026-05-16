@@ -58,3 +58,17 @@ OR
 tidesdb >> rocksdb >> innodb, 3 iterations each, 1000 warehouses, 7m ramp + 20m duration, 64 VUs.
 With --no-restart, iterations 2 and 3 have warm engine caches (buffer pool still hot).
 
+You can kick off a run in a screen/tmux so it survives disconnect
+screen -S bench
+./mariadb_engines_runner.sh \
+  --user hammerdb \
+  --pass hammerdb123 \
+  --socket /tmp/mariadb.sock \
+  --hammerdb-dir ~/HammerDB-5.0 \
+  --no-restart \
+  --no-drop-cache \
+  --no-perf \
+  --harness ./hammerdb_runner.sh
+
+Ctrl+A then D to detach. Reattach later with: screen -r bench
+
