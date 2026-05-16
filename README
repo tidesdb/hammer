@@ -74,3 +74,25 @@ screen -S bench
 
 Ctrl+A then D to detach. Reattach later with: screen -r bench
 
+OR
+
+nohup ./mariadb_engines_runner.sh \
+  --user hammerdb \
+  --pass hammerdb123 \
+  --socket /tmp/mariadb.sock \
+  --hammerdb-dir ~/HammerDB-5.0 \
+  --mariadb-bin /data/mariadb/bin/mariadb \
+  --no-restart \
+  --no-drop-cache \
+  --no-perf \
+  --harness ./hammerdb_runner.sh \
+  > bench.log 2>&1 &
+
+Watch output live
+tail -f bench.log
+
+Find the process
+ps aux | grep mariadb_engines_runner
+
+Kill it
+pkill -f mariadb_engines_runner
