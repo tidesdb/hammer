@@ -25,3 +25,20 @@ In which orchestrates a 3-iteration TPC-C sweep across InnoDB, MyRocks, and Tide
 using the HammerDB harness (hammerdb_runner.sh), then merges the
 per-iteration CSVs into a single set of paper-grade charts with min/max
 error bars.
+
+You can customize run like so
+mariadb_engines_runner.sh \
+  --harness /home/agpmastersystem/hammerdb_runner.sh \
+  --user agpmastersystem \
+  --socket /tmp/mariadb.sock \
+  --engines tidesdb,rocksdb,innodb \
+  --iterations 1 \
+  --warehouses 40 \
+  --build-vu 8 \
+  --run-vu 8 \
+  --rampup 1 \
+  --duration 2 \
+  --settle 5 \
+  --no-restart \
+  --no-drop-cache \
+  --no-perf
