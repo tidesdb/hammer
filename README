@@ -1,0 +1,27 @@
+LINUX
+~~~~~~~~~~~~~~~~~~~
+On Linux we get HammerDB minimum version 5 and in my case I extract it under ~/
+~/HammerDB-5.0
+
+I then on MariaDB/MySQL or Postgres create a HammerDB user.
+
+/data/mariadb/bin/mariadb -u root --socket=/tmp/mariadb.sock
+
+CREATE USER 'hammerdb'@'localhost' IDENTIFIED BY 'hammerdb123';
+GRANT ALL PRIVILEGES ON *.* TO 'hammerdb'@'localhost';
+FLUSH PRIVILEGES;
+
+
+From here you can run individual runs or multi engine.
+
+./hammerdb_runner.sh -b tpcc --warehouses 40 --tpcc-vu 8 --tpcc-build-vu 8 --rampup 1 --duration 2 --settle 5 -H ~/HammerDB-5.0 -e tidesdb -u hammerdb --pass hammerdb123 -S /tmp/mariadb.sock
+
+The scripts automatically plot data.
+
+We also have
+./run_mariadb_engines.sh
+
+In which orchestrates a 3-iteration TPC-C sweep across InnoDB, MyRocks, and TidesDB
+using the HammerDB harness (hammerdb_runner.sh), then merges the
+per-iteration CSVs into a single set of paper-grade charts with min/max
+error bars.
