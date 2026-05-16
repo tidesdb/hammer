@@ -3,7 +3,7 @@
 # mariadb_engines_runner.sh
 #
 # Orchestrates a 3-iteration TPC-C sweep across InnoDB, MyRocks, and TidesDB
-# using the HammerDB harness (hammerdb_runner.sh), then merges the
+# using the HammerDB harness (tidesdb_rocksdb_hammerdb.sh), then merges the
 # per-iteration CSVs into a single set of paper-grade charts with min/max
 # error bars.
 #
@@ -68,7 +68,7 @@ Usage: mariadb_engines_runner.sh [options]
   --run-vu N               Virtual users (default: 64)
   --build-vu N             Build virtual users (default: 6)
   --settle N               Settle seconds after build (default: 120)
-  --harness PATH           Path to tidesdb_rocksdb_hammerdb.sh
+  --harness PATH           Path to hammerdb_runner.sh
   --hammerdb-dir PATH      HammerDB install dir (default: ~/HammerDB-5.0)
   --socket PATH            MariaDB socket
   --user NAME              MariaDB user
@@ -353,7 +353,12 @@ preflight() {
 }
 
 if [[ "$SKIP_PREFLIGHT" -eq 0 ]]; then
-    preflight | tee "$RESULTS_DIR/preflight.log"
+    # `die` inside preflight only kills the subshell created by the pipe, so
+    # we must check the pipeline's exit explicitly -- otherwise a failed
+    # pre-flight silently proceeds to the benchmark phase.
+    if ! preflight 2>&1 | tee "$RESULTS_DIR/preflight.log"; then
+        die "Pre-flight failed -- see $RESULTS_DIR/preflight.log"
+    fi
 fi
 
 TOTAL_ITERS=$((${#ENGINE_LIST[@]} * ITERATIONS))
@@ -431,11 +436,11 @@ for ENG in "${ENGINE_LIST[@]}"; do
         # KEEP_SCHEMA_WITHIN_ENGINE=0:
         #   harness rebuilds every iter; nothing to do here.
         if [[ "$KEEP_SCHEMA_WITHIN_ENGINE" -eq 1 ]]; then
-            local _reuse=0
+            REUSE_SCHEMA=0
             if [[ "$ITER" -gt 1 ]] && journal_has "${ENG}_iter$((ITER - 1))_done"; then
-                _reuse=1
+                REUSE_SCHEMA=1
             fi
-            if [[ "$_reuse" -eq 0 ]]; then
+            if [[ "$REUSE_SCHEMA" -eq 0 ]]; then
                 log "Dropping tpcc to start this iter from a clean schema"
                 mysql_query "DROP DATABASE IF EXISTS tpcc" >/dev/null || \
                     warn "  DROP DATABASE failed (continuing; harness will retry)"
