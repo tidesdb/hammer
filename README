@@ -60,11 +60,13 @@ With --no-restart, iterations 2 and 3 have warm engine caches (buffer pool still
 
 You can kick off a run in a screen/tmux so it survives disconnect
 screen -S bench
+
 ./mariadb_engines_runner.sh \
   --user hammerdb \
   --pass hammerdb123 \
   --socket /tmp/mariadb.sock \
   --hammerdb-dir ~/HammerDB-5.0 \
+  --mariadb-bin /data/mariadb/bin/mariadb \
   --no-restart \
   --no-drop-cache \
   --no-perf \
