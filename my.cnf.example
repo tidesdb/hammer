@@ -276,3 +276,7 @@ max_allowed_packet = 64M
 
 [mariadb-backup]
 # defaults are fine
+
+# if you want jemalloc or another
+[mysqld_safe]
+malloc-lib=/lib/x86_64-linux-gnu/libjemalloc.so.2
