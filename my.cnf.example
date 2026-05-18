@@ -132,6 +132,10 @@ long_query_time     = 2
 
 innodb_buffer_pool_size        = 6G
 
+# match tidesdb and rocksdb compression 1:1
+innodb_compression_default = ON
+innodb_compression_algorithm = lz4
+
 # innodb_buffer_pool_instances not avail any longer MariaDB 10+
 #innodb_buffer_pool_instances   = 8
 
