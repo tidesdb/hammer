@@ -233,7 +233,7 @@ tidesdb_block_cache_size                       = 32G
 # 512M is the right size for the shared buffer - this is total in-memory
 # write capacity, not per-CF, so 512M absorbs a lot of TPC-C ops before flush.
 tidesdb_unified_memtable                       = ON
-tidesdb_unified_memtable_write_buffer_size     = 512M
+tidesdb_unified_memtable_write_buffer_size     = 128M
 
 # NONE = no fsync on commit. Roughly equivalent to MyRocks
 # rocksdb_flush_log_at_trx_commit=0 and InnoDB innodb_flush_log_at_trx_commit=0.
