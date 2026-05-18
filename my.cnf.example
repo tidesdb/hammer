@@ -222,6 +222,9 @@ rocksdb_compaction_sequential_deletes_window   = 200000
 plugin_maturity = gamma
 plugin_load_add = ha_tidesdb.so
 
+# allow tidesdb to use most memory
+tidesdb_max_memory_usage = 0
+
 # Cache - ALIGNED at 32G
 tidesdb_block_cache_size                       = 32G
 
@@ -248,8 +251,12 @@ tidesdb_default_write_buffer_size = 64M
 tidesdb_default_sync_mode = NONE
 tidesdb_default_compression = LZ4
 tidesdb_log_level = NONE
-tidesdb_default_l0_queue_stall_threshold = 20
+
+# align with RocksDB 15 queue size
+tidesdb_default_l0_queue_stall_threshold = 15
 tidesdb_default_l1_file_count_trigger = 4
+
+tidesdb_default_isolation_level = READ_COMMITTED
 
 # Tombstone-density compaction trigger - ALIGNED with MyRocks's
 # rocksdb_compaction_sequential_deletes_* settings (above), which trigger
