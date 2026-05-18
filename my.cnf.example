@@ -20,22 +20,6 @@
 #   Ubuntu 22.04 x86_64, XFS on raw NVMe (discard, inode64, nodiratime,
 #       noatime, logbsize=256k, logbufs=8)
 #
-# Target workload:
-#   HammerDB TPROC-C, 1000 warehouses (~100 GB), 64 virtual users,
-#   7 min ramp + 20 min duration.
-#
-# Memory budget (128 GB total)
-#   ~16 GB    OS + filesystem caches + HammerDB process + mariadbd overhead
-#   ~32 GB    primary engine cache    (aligned across all 3 engines)
-#   ~ 4 GB    write-side memtables / log buffers
-#   ~76 GB    HEADROOM for OS page cache, MyRocks/TidesDB SST caching,
-#             compaction scratch buffers, transaction memory
-#
-# At 1000 warehouses (~100 GB on disk), 32 GB cache means ~30% of the
-# working set fits in the engine's primary cache. The rest of RAM helps
-# MyRocks and TidesDB via the OS page cache, while InnoDB (using O_DIRECT)
-# uses only its 32 GB.
-#
 # Sources for the per-engine settings below
 #  * MyRocks: Facebook's official my.cnf-tuning wiki (Yoshinori Matsunobu)
 #      https://github.com/facebook/mysql-5.6/wiki/my.cnf-tuning
@@ -66,7 +50,7 @@
 #         memory before flush", and 256M is the right number for that)
 #
 #   - Background helper threads (16 per engine, ~50% of 32-thread CPU)
-#       InnoDB  : 4 read_io + 4 write_io  = 8
+#       InnoDB  : 2 innodb_purge_threads + 2 read_io + 4 write_io  = 8
 #       RocksDB : rocksdb_max_background_jobs = 8
 #       TidesDB : 4 flush + 4 compaction  = 8
 #
