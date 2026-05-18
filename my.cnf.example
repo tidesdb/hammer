@@ -195,8 +195,8 @@ rocksdb_max_total_wal_size        = 4G
 rocksdb_max_background_jobs       = 16
 rocksdb_max_subcompactions        = 4
 
-# Rate limiter - smooths compaction bursts.
-rocksdb_rate_limiter_bytes_per_sec = 400M
+# Rate limiter - smooths compaction bursts, 0 lets rocks decide
+rocksdb_rate_limiter_bytes_per_sec = 0
 
 # Sync intervals (FB recommended 4M; with durability off these are advisory)
 rocksdb_bytes_per_sync             = 4M
