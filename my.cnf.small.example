@@ -10,21 +10,6 @@
 #   Consumer SSD (SATA or modest NVMe)
 #   1-10 GB target schema (40 TPC-C warehouses = ~4 GB)
 #
-# Matches the workload pattern of:
-#   ./hammerdb_runner.sh -b tpcc \
-#       --warehouses 40 --tpcc-vu 8 --tpcc-build-vu 8 \
-#       --rampup 1 --duration 2 --settle 5 ...
-#
-# Memory budget (8 GB total)
-#   ~2 GB     OS + filesystem caches + HammerDB process + mariadbd overhead
-#   ~1 GB     primary engine cache    (aligned across all 3 engines)
-#   ~256 MB   write-side memtables / log buffers
-#   ~5 GB     HEADROOM for OS page cache, transaction memory, compaction scratch
-#
-# At 40 warehouses (~4 GB on disk), 1 GB cache means ~25% of working set fits
-# in primary cache - same "moderate-IO" character as the 32GB/100GB big-box
-# config. If you have 16 GB RAM, double the cache values. If you have 4 GB,
-# halve them (and expect more I/O-bound results).
 #
 # Same as the big-box config: aligned-off across all three engines so we
 # measure storage-engine performance, not fsync latency.
