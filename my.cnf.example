@@ -131,7 +131,9 @@ long_query_time     = 2
 # Sized for 1000-warehouse TPC-C on 128 GB box. Durability OFF for benchmarking.
 
 innodb_buffer_pool_size        = 32G
-innodb_buffer_pool_instances   = 8
+
+# innodb_buffer_pool_instances not avail any longer MariaDB 10+
+#innodb_buffer_pool_instances   = 8
 
 innodb_log_file_size           = 2G
 
