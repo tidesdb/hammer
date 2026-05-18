@@ -51,24 +51,24 @@
 # Alignment principle
 #
 # HELD ALIGNED across engines:
-#   - Primary explicit cache budget         : 32 GB
-#       innodb_buffer_pool_size              = 32G
-#       rocksdb_block_cache_size             = 32G
-#       tidesdb_block_cache_size             = 32G
+#   - Primary explicit cache budget         : 6 GB
+#       innodb_buffer_pool_size              = 6G
+#       rocksdb_block_cache_size             = 6G
+#       tidesdb_block_cache_size             = 6G
 #
 #   - Write-side memory budget
 #       innodb_log_file_size                 = 2G
-#       rocksdb write_buffer_size            = 256M * max_write_buffer_number=4 = ~1G
-#       tidesdb_unified_memtable_write_buffer_size = 512M
-#         (unified = ONE shared memtable across ALL CFs, so 512M is
+#       rocksdb write_buffer_size            = 64M * max_write_buffer_number=4 = ~256M
+#       tidesdb_unified_memtable_write_buffer_size = 256M
+#         (unified = ONE shared memtable across ALL CFs, so 256M is
 #         comparable to MyRocks's per-CF 256M not its total memtable
 #         memory; the comparison axis is "how much data can sit in
-#         memory before flush", and 512M is the right number for that)
+#         memory before flush", and 256M is the right number for that)
 #
 #   - Background helper threads (16 per engine, ~50% of 32-thread CPU)
-#       InnoDB  : 8 read_io + 8 write_io  = 16
-#       RocksDB : rocksdb_max_background_jobs = 16
-#       TidesDB : 8 flush + 8 compaction  = 16
+#       InnoDB  : 4 read_io + 4 write_io  = 8
+#       RocksDB : rocksdb_max_background_jobs = 8
+#       TidesDB : 4 flush + 4 compaction  = 8
 #
 #   - Durability                             = OFF (benchmark mode)
 #       innodb_flush_log_at_trx_commit       = 0  (flush every ~1s)
@@ -130,12 +130,12 @@ long_query_time     = 2
 # InnoDB
 # Sized for 1000-warehouse TPC-C on 128 GB box. Durability OFF for benchmarking.
 
-innodb_buffer_pool_size        = 32G
+innodb_buffer_pool_size        = 6G
 
 # innodb_buffer_pool_instances not avail any longer MariaDB 10+
 #innodb_buffer_pool_instances   = 8
 
-innodb_log_file_size           = 2G
+innodb_log_file_size           = 1G
 
 # innodb_log_files_in_group not valid MariaDB > 10
 # innodb_log_files_in_group      = 2
@@ -150,10 +150,10 @@ innodb_flush_method            = O_DIRECT_NO_FSYNC  # skip per-write fsync (fast
 
 innodb_file_per_table          = ON
 
-# I/O concurrency - 8+8 background threads aligned with TidesDB and MyRocks.
-innodb_read_io_threads         = 8
-innodb_write_io_threads        = 8
-innodb_purge_threads           = 4
+# I/O concurrency - 4+2+2 background threads aligned with TidesDB and MyRocks.
+innodb_read_io_threads         = 2
+innodb_write_io_threads        = 4
+innodb_purge_threads           = 2
 innodb_thread_concurrency      = 0           # unlimited
 
 # NVMe I/O capacity
@@ -174,8 +174,8 @@ plugin_load_add = ha_rocksdb.so
 # Avoid table-cache mutex on every SST file access (FB critical recommendation).
 rocksdb_max_open_files            = -1
 
-# Cache - ALIGNED at 32G
-rocksdb_block_cache_size          = 32G
+# Cache - ALIGNED at 6G
+rocksdb_block_cache_size          = 6G
 
 # Larger block size (FB recommends 16384)
 rocksdb_block_size                = 16384
@@ -192,7 +192,7 @@ rocksdb_wal_recovery_mode         = 2
 rocksdb_max_total_wal_size        = 4G
 
 # Background jobs - scaled up for the 32-thread Threadripper.
-rocksdb_max_background_jobs       = 16
+rocksdb_max_background_jobs       = 8
 rocksdb_max_subcompactions        = 4
 
 # Rate limiter - smooths compaction bursts, 0 lets rocks decide
@@ -206,12 +206,11 @@ rocksdb_wal_bytes_per_sync         = 4M
 rocksdb_use_direct_reads                       = 0
 rocksdb_use_direct_io_for_flush_and_compaction = 0
 
-# Bulk-load - toggled ON automatically by the benchmark script around build.
 rocksdb_bulk_load                  = 0
 rocksdb_bulk_load_allow_unsorted   = 0
 
 # Column-family options - the most important MyRocks tuning knob.
-rocksdb_default_cf_options = "write_buffer_size=256m;target_file_size_base=64m;max_bytes_for_level_base=1g;level0_file_num_compaction_trigger=4;level0_slowdown_writes_trigger=10;level0_stop_writes_trigger=15;max_write_buffer_number=4;compression_per_level=kLZ4Compression;bottommost_compression=kZSTD;compression_opts=-14:6:0;block_based_table_factory={cache_index_and_filter_blocks=1;filter_policy=bloomfilter:10:false;whole_key_filtering=1};level_compaction_dynamic_level_bytes=true;optimize_filters_for_hits=true;compaction_pri=kMinOverlappingRatio"
+rocksdb_default_cf_options = "write_buffer_size=64m;target_file_size_base=64m;max_bytes_for_level_base=1g;level0_file_num_compaction_trigger=4;level0_slowdown_writes_trigger=10;level0_stop_writes_trigger=15;max_write_buffer_number=4;compression_per_level=kLZ4Compression;bottommost_compression=kZSTD;compression_opts=-14:6:0;block_based_table_factory={cache_index_and_filter_blocks=1;filter_policy=bloomfilter:10:false;whole_key_filtering=1};level_compaction_dynamic_level_bytes=true;optimize_filters_for_hits=true;compaction_pri=kMinOverlappingRatio"
 
 # Tombstone-triggered compaction (FB example). Helps TPC-C delivery cycle.
 rocksdb_compaction_sequential_deletes_count_sd = 1
@@ -225,20 +224,19 @@ plugin_load_add = ha_tidesdb.so
 # allow tidesdb to use most memory
 tidesdb_max_memory_usage = 0
 
-# Cache - ALIGNED at 32G
-tidesdb_block_cache_size                       = 32G
+# Cache - ALIGNED at 6G
+tidesdb_block_cache_size                       = 6G
 
 # Unified memtable is one shared WAL + memtable across all column families.
 tidesdb_unified_memtable                       = ON
-tidesdb_unified_memtable_write_buffer_size     = 128M
+tidesdb_unified_memtable_write_buffer_size     = 256M
 
 # NONE = no fsync on commit. Roughly equivalent to MyRocks
 # rocksdb_flush_log_at_trx_commit=0 and InnoDB innodb_flush_log_at_trx_commit=0.
 tidesdb_unified_memtable_sync_mode             = NONE
 
-# Background threads - 8 + 8 = 16 = MyRocks max_background_jobs = InnoDB (8+8)
-tidesdb_flush_threads                          = 8
-tidesdb_compaction_threads                     = 8
+tidesdb_flush_threads                          = 4
+tidesdb_compaction_threads                     = 4
 
 # File-handle LRU cap. With 1000 warehouses + many CFs (one per index),
 # raise generously.
@@ -253,6 +251,10 @@ tidesdb_log_level = NONE
 tidesdb_default_l0_queue_stall_threshold = 15
 tidesdb_default_l1_file_count_trigger = 4
 
+# match rocksdb bulk load optimization
+tidesdb_skip_unique_check = ON
+
+# match mariadb configured default in this file, you need to set both
 tidesdb_default_isolation_level = READ_COMMITTED
 
 # Tombstone-density compaction trigger - ALIGNED with MyRocks's
