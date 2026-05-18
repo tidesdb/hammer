@@ -95,6 +95,8 @@ user      = root
 pid-file  = /data/mariadb/data/mariadb.pid
 log-error = /data/mariadb/data/mariadb.err
 
+plugin_load_add = provider_lz4.so
+
 # Networking and connections
 bind-address      = 127.0.0.1
 max_connections   = 4096             # generous headroom for VU sweeps
