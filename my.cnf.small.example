@@ -53,6 +53,8 @@ user    = agpmastersystem
 pid-file = /media/agpmastersystem/c794105c-0cd9-4be9-8369-ee6d6e707d68/home/bench/mariadb/data/mariadb.pid
 log-error = /media/agpmastersystem/c794105c-0cd9-4be9-8369-ee6d6e707d68/home/bench/mariadb/data/mariadb.err
 
+plugin_load_add = provider_lz4.so
+
 # Networking and connections
 bind-address      = 127.0.0.1
 max_connections   = 256              # headroom for 8 VUs + monitor
