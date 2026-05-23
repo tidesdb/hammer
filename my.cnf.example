@@ -1,6 +1,6 @@
 #
 # MariaDB configuration for aligned TPC-C benchmark across three engines:
-#   InnoDB, MyRocks (RocksDB), TidesDB (TideSQL)
+#   InnoDB, MyRocks (RocksDB), TideSQL (TidesDB)
 #
 # This config disables full per-commit durability ACROSS ALL THREE ENGINES
 # so we measure storage-engine throughput and latency, NOT fsync latency
