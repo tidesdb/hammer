@@ -1,98 +1,366 @@
-LINUX
-~~~~~~~~~~~~~~~~~~~
-On Linux we get HammerDB minimum version 5 and in my case I extract it under ~/
-~/HammerDB-5.0
+================================================================================
+  HammerDB Benchmark Harness - README
+================================================================================
 
-I then on MariaDB/MySQL or Postgres create a HammerDB user.
+This repository contains two scripts for running HammerDB TPC-C / TPC-H
+benchmarks across multiple storage engines (TidesDB, MyRocks/RocksDB, InnoDB)
+and PostgreSQL, with automatic paper-grade chart generation.
 
-/data/mariadb/bin/mariadb -u root --socket=/tmp/mariadb.sock
+  hammerdb_runner.sh
+      Single-engine harness. Runs one engine end-to-end: builds the schema,
+      settles, runs the benchmark, parses results, and plots charts.
 
-CREATE USER 'hammerdb'@'localhost' IDENTIFIED BY 'hammerdb123';
-GRANT ALL PRIVILEGES ON *.* TO 'hammerdb'@'localhost';
-FLUSH PRIVILEGES;
+  mariadb_engines_runner.sh
+      Multi-engine orchestrator. Runs N iterations per engine across a list
+      of engines (default: tidesdb, rocksdb, innodb) by repeatedly invoking
+      hammerdb_runner.sh, then merges every iteration's CSV into a single
+      set of charts with median bars and min/max error whiskers.
 
 
-From here you can run individual runs or multi engine.
+================================================================================
+  LINUX SETUP
+================================================================================
 
-./hammerdb_runner.sh -b tpcc --warehouses 40 --tpcc-vu 8 --tpcc-build-vu 8 --rampup 1 --duration 2 --settle 5 -H ~/HammerDB-5.0 -e tidesdb -u hammerdb --pass hammerdb123 -S /tmp/mariadb.sock
+1. Install HammerDB (minimum version 5).
+   In this guide we extract under the home directory:
 
-The scripts automatically plot data.
+       ~/HammerDB-5.0
 
-We also have
-./run_mariadb_engines.sh
+2. Create a HammerDB user on MariaDB / MySQL.
+   Connect as root via the server socket:
 
-In which orchestrates a 3-iteration TPC-C sweep across InnoDB, MyRocks, and TidesDB
-using the HammerDB harness (hammerdb_runner.sh), then merges the
-per-iteration CSVs into a single set of paper-grade charts with min/max
-error bars.
+       /data/mariadb/bin/mariadb -u root --socket=/tmp/mariadb.sock
 
-You can customize run like so
-mariadb_engines_runner.sh \
-  --harness /home/agpmastersystem/hammerdb_runner.sh \
-  --user agpmastersystem \
-  --socket /tmp/mariadb.sock \
-  --engines tidesdb,rocksdb,innodb \
-  --iterations 1 \
-  --warehouses 40 \
-  --build-vu 8 \
-  --run-vu 8 \
-  --rampup 1 \
-  --duration 2 \
-  --settle 5 \
-  --no-restart \
-  --no-drop-cache \
-  --no-perf
+   Then run:
 
-OR
+       CREATE USER 'hammerdb'@'localhost' IDENTIFIED BY 'hammerdb123';
+       GRANT ALL PRIVILEGES ON *.* TO 'hammerdb'@'localhost';
+       FLUSH PRIVILEGES;
 
-./mariadb_engines_runner.sh \
-  --user hammerdb \
-  --pass hammerdb123 \
-  --socket /tmp/mariadb.sock \
-  --hammerdb-dir ~/HammerDB-5.0 \
-  --no-restart \
-  --no-drop-cache \
-  --no-perf \
-  --harness ./hammerdb_runner.sh
+   (For PostgreSQL, see the --pg-* flags in `hammerdb_runner.sh --help`.)
 
-tidesdb >> rocksdb >> innodb, 3 iterations each, 1000 warehouses, 7m ramp + 20m duration, 64 VUs.
-With --no-restart, iterations 2 and 3 have warm engine caches (buffer pool still hot).
 
-You can kick off a run in a screen/tmux so it survives disconnect
-screen -S bench
+================================================================================
+  SINGLE RUN - hammerdb_runner.sh
+================================================================================
 
-./mariadb_engines_runner.sh \
-  --user hammerdb \
-  --pass hammerdb123 \
-  --socket /tmp/mariadb.sock \
-  --hammerdb-dir ~/HammerDB-5.0 \
-  --mariadb-bin /data/mariadb/bin/mariadb \
-  --no-restart \
-  --no-drop-cache \
-  --no-perf \
-  --harness ./hammerdb_runner.sh
+Run a single engine end-to-end (build schema, settle, run, parse, plot):
 
-Ctrl+A then D to detach. Reattach later with: screen -r bench
+    ./hammerdb_runner.sh \
+        -b tpcc \
+        --warehouses 40 \
+        --tpcc-vu 8 \
+        --tpcc-build-vu 8 \
+        --rampup 1 \
+        --duration 2 \
+        --settle 5 \
+        -H ~/HammerDB-5.0 \
+        -e tidesdb \
+        -u hammerdb --pass hammerdb123 \
+        -S /tmp/mariadb.sock
 
-OR
+Output:
 
-nohup ./mariadb_engines_runner.sh \
-  --user hammerdb \
-  --pass hammerdb123 \
-  --socket /tmp/mariadb.sock \
-  --hammerdb-dir ~/HammerDB-5.0 \
-  --mariadb-bin /data/mariadb/bin/mariadb \
-  --no-restart \
-  --no-drop-cache \
-  --no-perf \
-  --harness ./hammerdb_runner.sh \
-  > bench.log 2>&1 &
+  hammerdb_results_<timestamp>.csv      (one row of results)
+  hammerdb_logs_<timestamp>/            (Tcl scripts, run logs,
+                                         HammerDB sample logs, charts)
 
-Watch output live
-tail -f bench.log
+Charts (PNG 300 dpi + PDF vector) are generated automatically at the end of
+the run.
 
-Find the process
-ps aux | grep mariadb_engines_runner
+For the full option list, run:
 
-Kill it
-pkill -f mariadb_engines_runner
+    ./hammerdb_runner.sh --help
+
+Single-run notes:
+
+  - perf recording is OFF by default. Pass -p / --perf to enable it.
+  - To reuse the schema across runs (skip the build), pass --keep-schema.
+  - MyRocks knobs:
+        --rocksdb-no-bulk-load     disable rocksdb_bulk_load during build
+        --rocksdb-partition        enable partitioning for the RocksDB engine
+  - InnoDB auto-partitions at >= 200 warehouses (override via the
+    INNODB_PARTITION_THRESHOLD env var).
+
+
+================================================================================
+  MULTI-ENGINE SWEEP - mariadb_engines_runner.sh
+================================================================================
+
+`mariadb_engines_runner.sh` orchestrates a multi-iteration TPC-C sweep across
+a list of engines, then merges every CSV into a single set of paper-grade
+charts with min/max error bars.
+
+Defaults (when invoked with only credentials + paths):
+
+    Engines:     tidesdb -> rocksdb -> innodb
+    Iterations:  3 per engine
+    Warehouses:  1000
+    Rampup:      7 minutes
+    Duration:    20 minutes measured
+    VUs:         64 run / 6 build
+    Settle:      120 seconds after schema build
+    perf:        ON (use --no-perf to disable)
+    Restart:     mariadbd restarted between iterations (--no-restart to skip)
+    Drop cache:  OS page cache dropped between iterations (--no-drop-cache to skip)
+
+Output layout per invocation:
+
+    results_<timestamp>/
+        preflight.log
+        master.log
+        journal.txt                    # records completed iterations (for --resume)
+        <engine>/
+            iter1/                     # hammerdb_results_*.csv + logs
+            iter2/
+            iter3/
+        final/
+            merged/                    # combined min/max charts across all engines
+
+Notes on resume + warm caches:
+
+  - The runner journals each completed iteration. If the sweep is interrupted
+    (Ctrl-C, machine reboot, etc.), re-run with `--resume results_<ts>` to
+    pick up where it left off.
+  - With --no-restart, iterations 2 and 3 see warm engine caches (buffer pool
+    still hot from iteration 1). With --restart (default), each iteration
+    starts cold.
+
+
+--------------------------------------------------------------------------------
+  Example: customized short run
+--------------------------------------------------------------------------------
+
+    ./mariadb_engines_runner.sh \
+        --harness /home/agpmastersystem/hammerdb_runner.sh \
+        --user agpmastersystem \
+        --socket /tmp/mariadb.sock \
+        --engines tidesdb,rocksdb,innodb \
+        --iterations 1 \
+        --warehouses 40 \
+        --build-vu 8 \
+        --run-vu 8 \
+        --rampup 1 \
+        --duration 2 \
+        --settle 5 \
+        --no-restart \
+        --no-drop-cache \
+        --no-perf
+
+
+--------------------------------------------------------------------------------
+  Example: full default sweep with the hammerdb user
+--------------------------------------------------------------------------------
+
+    ./mariadb_engines_runner.sh \
+        --user hammerdb \
+        --pass hammerdb123 \
+        --socket /tmp/mariadb.sock \
+        --hammerdb-dir ~/HammerDB-5.0 \
+        --no-restart \
+        --no-drop-cache \
+        --no-perf \
+        --harness ./hammerdb_runner.sh
+
+
+--------------------------------------------------------------------------------
+  Example: explicit MariaDB client binary (stripped PATH / non-standard install)
+--------------------------------------------------------------------------------
+
+When `mariadb` / `mysql` is not on $PATH (common on minimal images or when
+running as a root user with a stripped PATH), point the orchestrator at the
+binary directly:
+
+    ./mariadb_engines_runner.sh \
+        --user hammerdb \
+        --pass hammerdb123 \
+        --socket /tmp/mariadb.sock \
+        --hammerdb-dir ~/HammerDB-5.0 \
+        --mariadb-bin /data/mariadb/bin/mariadb \
+        --no-restart \
+        --no-drop-cache \
+        --no-perf \
+        --harness ./hammerdb_runner.sh
+
+
+--------------------------------------------------------------------------------
+  Resuming an aborted sweep
+--------------------------------------------------------------------------------
+
+If a sweep is interrupted, re-run with --resume pointing at the same
+results_<timestamp>/ directory. The runner reads journal.txt and skips any
+iteration whose marker is already present.
+
+    ./mariadb_engines_runner.sh \
+        --resume results_20260516_120000 \
+        --user hammerdb \
+        --pass hammerdb123 \
+        --socket /tmp/mariadb.sock \
+        --hammerdb-dir ~/HammerDB-5.0 \
+        --harness ./hammerdb_runner.sh
+
+
+--------------------------------------------------------------------------------
+  Dry run / pre-flight only
+--------------------------------------------------------------------------------
+
+    ./mariadb_engines_runner.sh --dry-run    # show plan, run pre-flight, exit
+
+The pre-flight check validates:
+  - harness path is executable
+  - HammerDB directory exists
+  - mariadb client binary is reachable
+  - MariaDB is up and accepting connections
+  - every requested engine is loaded (information_schema.engines)
+  - free disk space on the data dir (warns below 200 GB)
+  - mariadbd open-files limit (warns below 65536)
+  - CPU governor is `performance`
+  - transparent huge pages is NOT `always`
+  - NUMA balancing is OFF
+  - passwordless sudo is available if drop-cache is enabled
+
+Pass --skip-preflight to bypass (you should know why).
+
+
+================================================================================
+  RUNNING UNATTENDED (survives disconnect)
+================================================================================
+
+A full sweep takes hours. Use screen or nohup so the run continues if your
+SSH session drops.
+
+
+--------------------------------------------------------------------------------
+  Option 1: screen / tmux
+--------------------------------------------------------------------------------
+
+    screen -S bench
+
+    ./mariadb_engines_runner.sh \
+        --user hammerdb \
+        --pass hammerdb123 \
+        --socket /tmp/mariadb.sock \
+        --hammerdb-dir ~/HammerDB-5.0 \
+        --mariadb-bin /data/mariadb/bin/mariadb \
+        --no-restart \
+        --no-drop-cache \
+        --no-perf \
+        --harness ./hammerdb_runner.sh
+
+  Detach:   Ctrl+A  then  D
+  Reattach: screen -r bench
+
+
+--------------------------------------------------------------------------------
+  Option 2: nohup + background
+--------------------------------------------------------------------------------
+
+    nohup ./mariadb_engines_runner.sh \
+        --user hammerdb \
+        --pass hammerdb123 \
+        --socket /tmp/mariadb.sock \
+        --hammerdb-dir ~/HammerDB-5.0 \
+        --mariadb-bin /data/mariadb/bin/mariadb \
+        --no-restart \
+        --no-drop-cache \
+        --no-perf \
+        --harness ./hammerdb_runner.sh \
+        > bench.log 2>&1 &
+
+  Watch output live:
+
+      tail -f bench.log
+
+  Find the process:
+
+      ps aux | grep mariadb_engines_runner
+
+  Kill it:
+
+      pkill -f mariadb_engines_runner
+
+
+================================================================================
+  CHARTS
+================================================================================
+
+Both scripts produce PNG (300 dpi) and PDF (vector) charts:
+
+  chart_tpcc_nopm                  New-order transactions per minute
+  chart_tpcc_tpm                   Total transactions per minute
+  chart_tpcc_latency               Avg + p95 response times per transaction
+  chart_tpcc_throughput_timeline   TPM over time (10s samples)
+  chart_tpcc_latency_timeline      p95 latency over time
+  chart_build_time                 Schema build time per engine
+  chart_perf_hotspots              CPU hotspots (only if perf was enabled)
+  chart_tpch / chart_tpch_*        TPC-H charts when -b tpch is selected
+
+When multiple CSVs are merged (multi-iteration sweep), bars show the median
+across iterations and whiskers show min/max.
+
+Re-plot from existing CSVs without re-running benchmarks:
+
+    # single CSV
+    ./hammerdb_runner.sh --plot-only hammerdb_results_<ts>.csv
+
+    # merge multiple iterations
+    ./hammerdb_runner.sh --plot-only run1.csv,run2.csv,run3.csv
+
+
+================================================================================
+  ORCHESTRATOR FLAG REFERENCE (mariadb_engines_runner.sh)
+================================================================================
+
+  --engines E1,E2,...          Engines to test (default: tidesdb,rocksdb,innodb)
+  --iterations N               Iterations per engine (default: 3)
+  --warehouses N               TPC-C warehouses (default: 1000)
+  --duration N                 Measured minutes per iteration (default: 20)
+  --rampup N                   Rampup minutes per iteration (default: 7)
+  --run-vu N                   Virtual users (default: 64)
+  --build-vu N                 Build virtual users (default: 6)
+  --settle N                   Settle seconds after build (default: 120)
+  --harness PATH               Path to hammerdb_runner.sh
+  --hammerdb-dir PATH          HammerDB install dir (default: ~/HammerDB-5.0)
+  --socket PATH                MariaDB socket
+  --user NAME                  MariaDB user
+  --pass PASS                  MariaDB password (or set MYSQL_PASS env)
+  --mariadb-bin PATH           Full path to mariadb/mysql client binary
+                                (override when not on PATH; or set MARIADB_BIN env)
+  --no-perf                    Skip perf record
+  --no-restart                 Don't restart mariadbd between iterations
+                                (faster, but cache-warm bias)
+  --no-drop-cache              Don't drop OS page cache between iterations
+  --no-keep-schema             Rebuild schema for every iteration
+                                (much slower, only useful for catastrophic schema bugs)
+  --no-cleanup-between-engines Don't drop previous engine's schema before next engine
+                                (uses more disk, but lets you re-inspect prior data)
+  --randomize                  Random engine order each invocation
+  --resume DIR                 Resume a previous results_<ts>/ run
+  --dry-run                    Print what would run, don't actually do it
+  --skip-preflight             Skip pre-flight checks (you should know why)
+  -h, --help                   Show usage
+
+
+================================================================================
+  TROUBLESHOOTING
+================================================================================
+
+"Unknown option: --no-restart" (or any --no-* flag) when calling
+hammerdb_runner.sh directly:
+    Those flags belong to the orchestrator (mariadb_engines_runner.sh), not
+    the single-run harness. The harness equivalent of "no perf" is simply
+    omitting -p. There is no --no-restart at the single-run level because
+    the single-run harness does not restart the database.
+
+Pre-flight fails on the mariadb client binary:
+    Pass --mariadb-bin /full/path/to/mariadb, or export MARIADB_BIN before
+    invocation.
+
+A long sweep failed partway through:
+    Re-invoke with --resume results_<ts>. Iterations recorded in
+    journal.txt are skipped; failed or incomplete iterations re-run.
+
+Disk fills up during a multi-engine sweep:
+    The orchestrator drops the previous engine's tpcc database before the
+    next engine builds, by default. If you passed --no-cleanup-between-engines,
+    drop the database manually between engines or remove the flag.
