@@ -7,6 +7,14 @@
 # of the underlying NVMe. Aligning durability OFF is honest because doing
 # it for one engine without the others would skew the result.
 #
+# Compression is OFF on all three engines. This was a deliberate choice:
+# enabling InnoDB page compression in MariaDB requires per-table DDL
+# (PAGE_COMPRESSED=1), which HammerDB's TPC-C schema builder does not
+# emit. Rather than alter the schema for one engine only (which itself
+# would be a methodology asymmetry), we run all three uncompressed.
+# Disk footprint will differ across engines but throughput/latency
+# numbers reflect raw engine behavior with no compression CPU overhead.
+#
 # Production deployments should re-enable:
 #   innodb_flush_log_at_trx_commit     = 1
 #   innodb_doublewrite                 = ON
@@ -35,24 +43,28 @@
 # Alignment principle
 #
 # HELD ALIGNED across engines:
-#   - Primary explicit cache budget         : 6 GB
-#       innodb_buffer_pool_size              = 6G
-#       rocksdb_block_cache_size             = 6G
-#       tidesdb_block_cache_size             = 6G
+#   - Primary explicit cache budget         : 32 GB
+#       innodb_buffer_pool_size              = 32G
+#       rocksdb_block_cache_size             = 32G
+#       tidesdb_block_cache_size             = 32G
+#     (sized conservatively: even if all three caches were touched
+#      concurrently they fit in 128 GB with headroom for memtables,
+#      connections, OS page cache, and HammerDB driver memory)
 #
-#   - Write-side memory budget
-#       innodb_log_file_size                 = 2G
-#       rocksdb write_buffer_size            = 64M * max_write_buffer_number=4 = ~256M
-#       tidesdb_unified_memtable_write_buffer_size = 256M
-#         (unified = ONE shared memtable across ALL CFs, so 256M is
-#         comparable to MyRocks's per-CF 256M not its total memtable
-#         memory; the comparison axis is "how much data can sit in
-#         memory before flush", and 256M is the right number for that)
+#   - Write-side memory budget               : 1 GB
+#       innodb_log_file_size                 = 1G
+#       rocksdb write_buffer_size            = 256M * max_write_buffer_number=4 = 1G
+#       tidesdb_unified_memtable_write_buffer_size = 1G
+#         (unified = ONE shared memtable across ALL CFs, so 1G is
+#         comparable to MyRocks's per-CF 1G total memtable memory;
+#         the comparison axis is "how much data can sit in memory
+#         before flush")
 #
-#   - Background helper threads (16 per engine, ~50% of 32-thread CPU)
-#       InnoDB  : 2 innodb_purge_threads + 2 read_io + 4 write_io  = 8
-#       RocksDB : rocksdb_max_background_jobs = 8
-#       TidesDB : 4 flush + 4 compaction  = 8
+#   - Background helper threads (8 per engine, 25% of 32-thread CPU,
+#     leaving 24 threads for HammerDB virtual users + foreground work)
+#       InnoDB  : 2 purge + 2 read_io + 4 write_io           = 8
+#       RocksDB : rocksdb_max_background_jobs                = 8
+#       TidesDB : 4 flush + 4 compaction                     = 8
 #
 #   - Durability                             = OFF (benchmark mode)
 #       innodb_flush_log_at_trx_commit       = 0  (flush every ~1s)
@@ -60,14 +72,19 @@
 #       rocksdb_flush_log_at_trx_commit      = 0  (flush every ~1s)
 #       tidesdb_unified_memtable_sync_mode   = NONE
 #
+#   - Compression                            = OFF (all engines)
+#       (no innodb_compression_default, no compression_per_level in
+#       MyRocks CF options, tidesdb_default_compression = NONE)
+#
 #   - Transaction isolation                  = READ-COMMITTED
 #   - Binlog                                 = OFF
+#   - performance_schema                     = OFF (instrumentation
+#       overhead is asymmetric across engines)
 #
 # Not held aligned (engine-native architectural differences):
-#   - I/O method, InnoDB uses O_DIRECT (bypasses OS cache); MyRocks and
+#   - I/O method: InnoDB uses O_DIRECT (bypasses OS cache); MyRocks and
 #     TidesDB use buffered I/O (their native design - SST data benefits
 #     from OS page cache).
-#   - Compression: each engine uses its recommended algorithm.
 #
 
 [mysqld]
@@ -79,11 +96,15 @@ user      = root
 pid-file  = /data/mariadb/data/mariadb.pid
 log-error = /data/mariadb/data/mariadb.err
 
-plugin_load_add = provider_lz4.so
+# All plugins loaded in a single directive (semicolon-separated).
+# A second plugin_load_add line would override this one, not append to it.
+plugin_load_add = ha_rocksdb.so;ha_tidesdb.so
+
+plugin_maturity = gamma
 
 # Networking and connections
 bind-address      = 127.0.0.1
-max_connections   = 4096             # generous headroom for VU sweeps
+max_connections   = 4096
 thread_cache_size = 256
 table_open_cache  = 16384
 
@@ -93,6 +114,11 @@ open_files_limit  = 1048576
 
 # Replication / binlog
 skip-log-bin
+
+# Performance schema OFF - its instrumentation cost is asymmetric across
+# engines (InnoDB is more thoroughly instrumented than MyRocks/TidesDB),
+# which would skew the comparison.
+performance_schema = OFF
 
 # Default engine and isolation
 default_storage_engine     = InnoDB
@@ -113,38 +139,30 @@ slow_query_log      = ON
 slow_query_log_file = /data/mariadb/data/slow.log
 long_query_time     = 2
 
+# ============================================================================
 # InnoDB
-# Sized for 1000-warehouse TPC-C on 128 GB box. Durability OFF for benchmarking.
+# ============================================================================
 
-innodb_buffer_pool_size        = 6G
+# ALIGNED cache: 32 GB
+innodb_buffer_pool_size        = 32G
 
-# match tidesdb and rocksdb compression 1:1
-innodb_compression_default = ON
-innodb_compression_algorithm = lz4
-
-# innodb_buffer_pool_instances not avail any longer MariaDB 10+
-#innodb_buffer_pool_instances   = 8
-
+# ALIGNED write-side memory: 1 GB
 innodb_log_file_size           = 1G
-
-# innodb_log_files_in_group not valid MariaDB > 10
-# innodb_log_files_in_group      = 2
-
 innodb_log_buffer_size         = 64M
 
 # === BENCHMARKING DURABILITY ===
 innodb_flush_log_at_trx_commit = 0           # flush + sync log every ~1s (not per commit)
 innodb_doublewrite             = OFF         # disable double-write buffer
 innodb_flush_method            = O_DIRECT_NO_FSYNC  # skip per-write fsync (faster than O_DIRECT
-                                              # when innodb_flush_log_at_trx_commit != 1)
+                                                    # when innodb_flush_log_at_trx_commit != 1)
 
 innodb_file_per_table          = ON
 
-# I/O concurrency - 4+2+2 background threads aligned with TidesDB and MyRocks.
+# I/O concurrency - ALIGNED 8 background threads (2 purge + 2 read_io + 4 write_io).
 innodb_read_io_threads         = 2
 innodb_write_io_threads        = 4
 innodb_purge_threads           = 2
-innodb_thread_concurrency      = 0           # unlimited
+innodb_thread_concurrency      = 0           # unlimited foreground
 
 # NVMe I/O capacity
 innodb_io_capacity             = 10000
@@ -157,15 +175,15 @@ innodb_adaptive_flushing       = 1
 tmp_table_size                 = 128M
 max_heap_table_size            = 128M
 
-
+# ============================================================================
 # MyRocks (RocksDB)
-plugin_load_add = ha_rocksdb.so
+# ============================================================================
 
 # Avoid table-cache mutex on every SST file access (FB critical recommendation).
 rocksdb_max_open_files            = -1
 
-# Cache - ALIGNED at 6G
-rocksdb_block_cache_size          = 6G
+# ALIGNED cache: 32 GB
+rocksdb_block_cache_size          = 32G
 
 # Larger block size (FB recommends 16384)
 rocksdb_block_size                = 16384
@@ -177,13 +195,14 @@ rocksdb_table_cache_numshardbits  = 6
 # Roughly equivalent to innodb_flush_log_at_trx_commit=0.
 rocksdb_flush_log_at_trx_commit   = 0
 
-# WAL crash safety mode (still useful even with relaxed durability)
+# WAL crash safety mode (PointInTimeRecovery - tolerates WAL tail
+# corruption after benchmark-driven SIGKILLs)
 rocksdb_wal_recovery_mode         = 2
 rocksdb_max_total_wal_size        = 4G
 
-# Background jobs - scaled up for the 32-thread Threadripper.
+# ALIGNED background jobs: 8.
 rocksdb_max_background_jobs       = 8
-rocksdb_max_subcompactions        = 4
+rocksdb_max_subcompactions        = 2
 
 # Rate limiter - smooths compaction bursts, 0 lets rocks decide
 rocksdb_rate_limiter_bytes_per_sec = 0
@@ -199,32 +218,39 @@ rocksdb_use_direct_io_for_flush_and_compaction = 0
 rocksdb_bulk_load                  = 0
 rocksdb_bulk_load_allow_unsorted   = 0
 
-# Column-family options - the most important MyRocks tuning knob.
-rocksdb_default_cf_options = "write_buffer_size=64m;target_file_size_base=64m;max_bytes_for_level_base=1g;level0_file_num_compaction_trigger=4;level0_slowdown_writes_trigger=10;level0_stop_writes_trigger=15;max_write_buffer_number=4;compression_per_level=kLZ4Compression;bottommost_compression=kZSTD;compression_opts=-14:6:0;block_based_table_factory={cache_index_and_filter_blocks=1;filter_policy=bloomfilter:10:false;whole_key_filtering=1};level_compaction_dynamic_level_bytes=true;optimize_filters_for_hits=true;compaction_pri=kMinOverlappingRatio"
+# Column-family options. Compression keys (compression_per_level,
+# bottommost_compression, compression_opts) have been REMOVED so MyRocks
+# writes uncompressed SSTs, matching InnoDB and TidesDB.
+# Memtable budget: write_buffer_size=256m * max_write_buffer_number=4 = 1G,
+# aligned with the 1 GB write-side budget on the other engines.
+rocksdb_default_cf_options = "write_buffer_size=256m;target_file_size_base=64m;max_bytes_for_level_base=1g;level0_file_num_compaction_trigger=4;level0_slowdown_writes_trigger=10;level0_stop_writes_trigger=15;max_write_buffer_number=4;block_based_table_factory={cache_index_and_filter_blocks=1;filter_policy=bloomfilter:10:false;whole_key_filtering=1};level_compaction_dynamic_level_bytes=true;optimize_filters_for_hits=true;compaction_pri=kMinOverlappingRatio"
 
 # Tombstone-triggered compaction (FB example). Helps TPC-C delivery cycle.
 rocksdb_compaction_sequential_deletes_count_sd = 1
 rocksdb_compaction_sequential_deletes          = 199999
 rocksdb_compaction_sequential_deletes_window   = 200000
 
+# ============================================================================
 # TidesDB (TideSQL)
-plugin_maturity = gamma
-plugin_load_add = ha_tidesdb.so
+# ============================================================================
 
-# allow tidesdb to use most memory
+# Let TidesDB manage its own memory ceiling (it respects the explicit
+# block_cache_size and memtable_write_buffer_size below).
 tidesdb_max_memory_usage = 0
 
-# Cache - ALIGNED at 6G
-tidesdb_block_cache_size                       = 6G
+# ALIGNED cache: 32 GB
+tidesdb_block_cache_size                       = 32G
 
 # Unified memtable is one shared WAL + memtable across all column families.
+# ALIGNED write-side memory: 1 GB
 tidesdb_unified_memtable                       = ON
-tidesdb_unified_memtable_write_buffer_size     = 256M
+tidesdb_unified_memtable_write_buffer_size     = 1G
 
 # NONE = no fsync on commit. Roughly equivalent to MyRocks
 # rocksdb_flush_log_at_trx_commit=0 and InnoDB innodb_flush_log_at_trx_commit=0.
 tidesdb_unified_memtable_sync_mode             = NONE
 
+# ALIGNED background threads: 4 flush + 4 compaction = 8.
 tidesdb_flush_threads                          = 4
 tidesdb_compaction_threads                     = 4
 
@@ -232,20 +258,37 @@ tidesdb_compaction_threads                     = 4
 # raise generously.
 tidesdb_max_open_sstables                      = 4096
 
-tidesdb_default_write_buffer_size = 64M
-tidesdb_default_sync_mode = NONE
-tidesdb_default_compression = LZ4
-tidesdb_log_level = NONE
+tidesdb_default_sync_mode    = NONE
+tidesdb_default_compression  = NONE
+tidesdb_log_level            = NONE
 
-# align with RocksDB 15 queue size
+# Align L0 stall threshold with RocksDB level0_stop_writes_trigger=15
+# and L1 trigger with level0_file_num_compaction_trigger=4.
 tidesdb_default_l0_queue_stall_threshold = 15
-tidesdb_default_l1_file_count_trigger = 4
+tidesdb_default_l1_file_count_trigger    = 4
 
-# match rocksdb bulk load optimization
+# Safe for TPC-C - every INSERT PK is application-monotonic (d_next_o_id,
+# ol_number, AUTO_INCREMENT h_id) and the HammerDB schema has no UNIQUE
+# secondary indexes, so the dup-check path has nothing to enforce.
 tidesdb_skip_unique_check = ON
 
-# match mariadb configured default in this file, you need to set both
+# Match the server-wide transaction_isolation set above.
 tidesdb_default_isolation_level = READ_COMMITTED
+
+# Tighter bloom FPR (0.1% vs default 1%) cuts false-positive SSTable
+# seeks ~10x. TPC-C is point-lookup heavy (CUSTOMER, STOCK, ITEM,
+# WAREHOUSE by PK).
+tidesdb_default_bloom_fpr = 10
+
+# 1024 keeps the full CUSTOMER row inline in klog (c_data 500B + name
+# and address fields ~200B crosses the default 512), removing one vlog
+# hop per Payment.
+tidesdb_default_klog_value_threshold = 1024
+
+# TPC-C transactions are sub-second. 5s is plenty, vs the default 50s
+# that would hang a HammerDB vuser for almost a minute on a conflict.
+# Wait-for-graph deadlocks fire immediately regardless.
+tidesdb_lock_wait_timeout_ms = 5000
 
 # Tombstone-density compaction trigger - ALIGNED with MyRocks's
 # rocksdb_compaction_sequential_deletes_* settings (above), which trigger
@@ -259,7 +302,7 @@ tidesdb_default_isolation_level = READ_COMMITTED
 # and covers the secondary-index tombstone path for all DELETEs.
 #
 # Primary-CF single-delete (tidesdb_single_delete_primary) is intentionally
-# left OFF - the TidesDB doc explicitly warns it can cause correctness issues
+# left OFF - it can cause correctness issues
 # when the workload contains UPDATE on non-PK columns or REPLACE INTO patterns.
 # TPC-C's Payment transaction UPDATEs balances, and New Order can hit IODKU
 # paths, so enabling primary-CF SD is unsafe here.
@@ -278,6 +321,13 @@ max_allowed_packet = 64M
 [mariadb-backup]
 # defaults are fine
 
-# if you want jemalloc or another
+# jemalloc via mysqld_safe. NOTE: on Ubuntu 22.04 the default systemd unit
+# (mariadb.service) does NOT invoke mysqld_safe and therefore ignores this
+# section. To actually load jemalloc with systemd, add a drop-in:
+#   /etc/systemd/system/mariadb.service.d/jemalloc.conf
+#   [Service]
+#   Environment="LD_PRELOAD=/lib/x86_64-linux-gnu/libjemalloc.so.2"
+# Then `systemctl daemon-reload && systemctl restart mariadb` and verify
+# with: pmap $(pidof mariadbd) | grep jemalloc
 [mysqld_safe]
 malloc-lib=/lib/x86_64-linux-gnu/libjemalloc.so.2
