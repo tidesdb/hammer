@@ -250,7 +250,7 @@ tidesdb_unified_memtable_write_buffer_size     = 1G
 # rocksdb_flush_log_at_trx_commit=0 and InnoDB innodb_flush_log_at_trx_commit=0.
 tidesdb_unified_memtable_sync_mode             = NONE
 
-# ALIGNED background threads: 4 flush + 4 compaction = 8.
+# ALIGNED background threads
 tidesdb_flush_threads                          = 4
 tidesdb_compaction_threads                     = 4
 
@@ -264,7 +264,7 @@ tidesdb_log_level            = NONE
 
 # Align L0 stall threshold with RocksDB level0_stop_writes_trigger=15
 # and L1 trigger with level0_file_num_compaction_trigger=4.
-tidesdb_default_l0_queue_stall_threshold = 15
+tidesdb_default_l0_queue_stall_threshold = 24
 tidesdb_default_l1_file_count_trigger    = 4
 
 # Safe for TPC-C - every INSERT PK is application-monotonic (d_next_o_id,
@@ -285,10 +285,8 @@ tidesdb_default_bloom_fpr = 10
 # hop per Payment.
 tidesdb_default_klog_value_threshold = 1024
 
-# TPC-C transactions are sub-second. 5s is plenty, vs the default 50s
-# that would hang a HammerDB vuser for almost a minute on a conflict.
-# Wait-for-graph deadlocks fire immediately regardless.
-tidesdb_lock_wait_timeout_ms = 5000
+tidesdb_lock_wait_timeout_ms = 240000
+tidesdb_backpressure_wait_timeout_ms = 600000  
 
 # Tombstone-density compaction trigger - ALIGNED with MyRocks's
 # rocksdb_compaction_sequential_deletes_* settings (above), which trigger
