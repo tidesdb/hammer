@@ -53,12 +53,9 @@
 #
 #   - Write-side memory budget               : 1 GB
 #       innodb_log_file_size                 = 1G
-#       rocksdb write_buffer_size            = 256M * max_write_buffer_number=4 = 1G
-#       tidesdb_unified_memtable_write_buffer_size = 1G
-#         (unified = ONE shared memtable across ALL CFs, so 1G is
-#         comparable to MyRocks's per-CF 1G total memtable memory;
-#         the comparison axis is "how much data can sit in memory
-#         before flush")
+#       rocksdb write_buffer_size            = 64M each cf 
+#       tidesdb_unified_memtable_write_buffer_size = 256M
+#         (unified = ONE shared memtable across ALL CFs
 #
 #   - Background helper threads (8 per engine, 25% of 32-thread CPU,
 #     leaving 24 threads for HammerDB virtual users + foreground work)
@@ -218,12 +215,7 @@ rocksdb_use_direct_io_for_flush_and_compaction = 0
 rocksdb_bulk_load                  = 0
 rocksdb_bulk_load_allow_unsorted   = 0
 
-# Column-family options. Compression keys (compression_per_level,
-# bottommost_compression, compression_opts) have been REMOVED so MyRocks
-# writes uncompressed SSTs, matching InnoDB and TidesDB.
-# Memtable budget: write_buffer_size=256m * max_write_buffer_number=4 = 1G,
-# aligned with the 1 GB write-side budget on the other engines.
-rocksdb_default_cf_options = "write_buffer_size=256m;target_file_size_base=64m;max_bytes_for_level_base=1g;level0_file_num_compaction_trigger=4;level0_slowdown_writes_trigger=10;level0_stop_writes_trigger=15;max_write_buffer_number=4;block_based_table_factory={cache_index_and_filter_blocks=1;filter_policy=bloomfilter:10:false;whole_key_filtering=1};level_compaction_dynamic_level_bytes=true;optimize_filters_for_hits=true;compaction_pri=kMinOverlappingRatio"
+rocksdb_default_cf_options = "write_buffer_size=64m;target_file_size_base=64m;max_bytes_for_level_base=1g;level0_file_num_compaction_trigger=4;level0_slowdown_writes_trigger=20;level0_stop_writes_trigger=40;max_write_buffer_number=4;block_based_table_factory={cache_index_and_filter_blocks=1;filter_policy=bloomfilter:10:false;whole_key_filtering=1};level_compaction_dynamic_level_bytes=true;optimize_filters_for_hits=true;compaction_pri=kMinOverlappingRatio"
 
 # Tombstone-triggered compaction (FB example). Helps TPC-C delivery cycle.
 rocksdb_compaction_sequential_deletes_count_sd = 1
@@ -242,16 +234,15 @@ tidesdb_max_memory_usage = 0
 tidesdb_block_cache_size                       = 32G
 
 # Unified memtable is one shared WAL + memtable across all column families.
-# ALIGNED write-side memory: 1 GB
 tidesdb_unified_memtable                       = ON
-tidesdb_unified_memtable_write_buffer_size     = 1G
+tidesdb_unified_memtable_write_buffer_size     = 256M
 
 # NONE = no fsync on commit. Roughly equivalent to MyRocks
 # rocksdb_flush_log_at_trx_commit=0 and InnoDB innodb_flush_log_at_trx_commit=0.
 tidesdb_unified_memtable_sync_mode             = NONE
 
 # ALIGNED background threads
-tidesdb_flush_threads                          = 8
+tidesdb_flush_threads                          = 4
 tidesdb_compaction_threads                     = 4
 
 # File-handle LRU cap. With 1000 warehouses + many CFs (one per index),
@@ -262,9 +253,7 @@ tidesdb_default_sync_mode    = NONE
 tidesdb_default_compression  = NONE
 tidesdb_log_level            = NONE
 
-# Align L0 stall threshold with RocksDB level0_stop_writes_trigger=15
-# and L1 trigger with level0_file_num_compaction_trigger=4.
-tidesdb_default_l0_queue_stall_threshold = 10
+tidesdb_default_l0_queue_stall_threshold = 40
 tidesdb_default_l1_file_count_trigger    = 4
 
 # Safe for TPC-C - every INSERT PK is application-monotonic (d_next_o_id,
